@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess</title>
+</head>
+<body>
+    <h1>Simple Chess</h1>
+    <div>
+        <button onclick="reset()">Reset</button>
+        <button onclick="back()">Back</button>
+    </div>
+    <div id="main" style="position: relative; margin: auto; width: 960px; ">
+        <div id="wtaken" style="position: absolute;  top:0px; width:160px; height: 640px;"></div>
+        <div id="container" style="position: absolute;  top:0px; left:160px;width:640px; height: 640px;"></div>
+        <div id="btaken" style="position: absolute;  top:0px;left:800px; width:160px; height: 640px;"></div>
+    </div>
+</body>
+
+
+<script>
+    const size = 80;
+    const spiece = 60;
+    //positions per row | active color | castling avalavility | En passant target square | number of moves since last pawn capture | fullmove number
+    const initialGameInfo = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/ w KQkq - 0 0"; //FEN notation
+    let flagCastling = "";
+    const st = "position:absolute; width:" + spiece + "px; height: " + spiece + "px; left:10px; top:10px; opacity:1;";  //style for pieces on the board
+    const st2 = "position:absolute; width:" + spiece + "px; height: " + spiece + "px; left:10px; top:10px; opacity:0.2;"; //style for taken pieces
+    const sqColor1 = '#f4f4f4';
+    const sqColor2 = '#4d98a8';
+    const sqColor1Move = '#f4d6d6';
+    const sqColor2Move = '#a84d4d';
+
+
+    let board = [];
+    let taken = [];
+    let history = [];
+    let csHistory = [];
+    //initial state
+    let pos = initialGameInfo;
+    history.push(pos);
+    let currentSquare = null; //Square origin of the piece that is dragged.
+    let posShowingMoves = null; //store the position (1 - 64) of the last highligthed piece that is showing its possible moves on screen
+    let startSquare = null;
+    csHistory.push(currentSquare); // currentSquare history
+    taken.push('');
+
+    function cleanBoardInternalState(){
+        for (let i = 0; i < 8; i++) {
+            board[i]=[0,0,0,0,0,0,0,0];
+        }
+    }
+
+    /**
+     * Draw th board and initalize internal state
+     *
+     */
+    function drawBoard(){
+        //draw main board
+        const c = document.getElementById('container');
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 8; j++) {
+                createSquare(i,j,c,sqColor1, sqColor2, "");
+            }       
+        }
+        //draw taken boards
+        const takenWhite = document.getElementById('wtaken');
+        const takenBlack = document.getElementById('btaken');
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 2; j++) {
+                createSquare(i,j,takenWhite,"#f9fcfc70;", "#f9fcfc70;", "tw");
+                createSquare(i,j,takenBlack,"#f9fcfc70;", "#f9fcfc70;", "tb");
+            } 
+        }
+    }
+
+    /**
+     * Auxiliar function to create squares in all boards, main, taken white and taken black.
+     * For taken sections allowdrop and drop are disabled
+     *
+     */
+    function createSquare(i,j,container,color1, color2, prefix){
+        let square = container.appendChild(document.createElement("div"));
+        let st = "position:absolute; width:80px; height: 80px;";
+        st += "top:" + (i * size) + "px; left:" + (j*size) +"px;";
+        st += (Math.round((i+j)/2) == (i+j)/2) ? "background-color:" + color1 : "background-color:" + color2  ;
+        square.setAttribute('id', prefix + i + "-" + j);    
+        square.setAttribute('style', st); 
+        square.setAttribute('class', "boardsquare");
+        if (prefix.length == 0) {
+            square.setAttribute('ondragover', "allowDrop(event)");
+            square.setAttribute('ondrop', "drop(event)");
+        }
+    }
+
+    
+    /**
+     * Draw all the pieces on the board according to the position string information
+     * 
+     */
+    function showPieces(){
+        cleanBoardInternalState();
+        const gameInfo = pos.split(" "); 
+        const rows = gameInfo[0].split('/'); //get posinfo from gameInfo (tourn, castling, others )
+        rows.forEach((row,index) => {
+            let counter = 0;
+            let offset = 0;
+            while (counter < 8){
+                let token = row.charAt(offset++);
+                if (token.length == 0) break;
+                if (parseInt(token)>0){
+                    counter += parseInt(token);
+                } else {
+                    board[index][counter] = token;
+                    square = document.getElementById( index + "-" + counter);
+                    square.innerHTML = "";
+                    let piece = square.appendChild(document.createElement("img"));
+                    piece.setAttribute('id', token + parseInt(Math.random()*1000000));
+                    piece.setAttribute('src', 'pieces/' + token + '.svg');
+                    piece.setAttribute('style', st);
+                    piece.setAttribute('draggable', true);
+                    piece.setAttribute('ondragstart', "drag(event)");
+                    piece.setAttribute('onmousedown','mouseDownOnPiece()');
+                    piece.setAttribute('onmouseup','mouseUpOnPiece()');
+                    counter++;
+                }
+           }
+        });
+    }
+
+    function mouseDownOnPiece(){
+        const parent = document.getElementById(event.target.id).parentElement;
+        startSquare = parent.id;
+        showPossibleMoves(event.target.id);
+    }
+
+    function mouseUpOnPiece(){
+        cleanBoardSquares();
+    }
+
+    function drag(event){
+        const pieceId = event.target.id;
+        if (!checkTurn(pieceId)){
+            return;
+        }
+        event.dataTransfer.setData("text", pieceId);
+        const parent = document.getElementById(pieceId).parentElement;
+    }
+
+    function allowDrop(event){
+        event.preventDefault();
+    }
+
+    function drop(event){
+        event.preventDefault();
+        //verify id my king is under attack after this move
+
+        if (movePiece2Position(event)){
+            if (kingUnderAttack("enemy")) { //verify if the enemy king is in check after this move
+                alert("Check!");
+            }
+            updateLog(); //update log as the last operation 
+            if (kingUnderAttack("own")){
+                //revert move, the move is not valid... King under attack
+                back();
+                return false;
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Move a piece to it's new position, if it's occupied take the piece.
+     * If the movement is castling, move the rook to the new position too
+     * 
+     */
+    function movePiece2Position(event){
+        const pieceId = event.dataTransfer.getData("text");
+        let takenPiece = null;
+        if ( pieceId.length == 0 ) return false; //check if there a valid information for pieceID. (control for taken pieces drag&drop)  
+        let targetSquare = event.target.parentElement.id;
+        if ( startSquare == targetSquare) return false; //trying to move to the same position
+        csHistory.push(startSquare); //current square history
+        if ( targetSquare != 'container' ) { //square occupied?
+            //check same team (white on white or black on black)
+            if( (event.target.id.charCodeAt(0)>97 && pieceId.charCodeAt(0)>97) || (event.target.id.charCodeAt(0)<97 && pieceId.charCodeAt(0)<97) ) {
+                return false;
+            }
+            takenPiece = event.target.id;
+        } else {
+            targetSquareElem = event.target;
+            targetSquare = targetSquareElem.id;
+            if ( targetSquareElem.children.length > 0 ) {//check if there is already an element in the target square (drop on 10px border of square)
+                takenPiece = targetSquareElem.children[0].id;
+            }
+        }
+        if (takenPiece == null){
+            taken.push(''); //movement without taken a piece
+        }else{
+            taken.push(takenPiece);
+        }
+        movePiece(startSquare, targetSquare);
+        processCastling(targetSquare); //castling detection and execution
+        return true;
+    }
+
+    /*
+     * Process castling movements
+     * @param {string} targetSquare - square id where the king will be at the end of the movement
+     * 
+     */
+    function processCastling(targetSquare){
+        const targetRow = targetSquare.charAt(0);
+        const targetCol = targetSquare.charAt(2);
+        const castlingStatus = history.slice(-1)[0].split(' ')[2]; //KQkq (castling options)
+        flagCastling = "";
+        const pieces = ['K','K','k','k'];
+        const targets = [6,1,6,1];
+        const statuses = ['K','Q','k','q'];
+        const startCols = [1,-1,1,-1];
+        const endCols = [-1,1,-1,1];
+        const flagCastlings = ['X','X','x','x'];
+        for (let i = 0; i < 4; i++){
+            if ( pieceId.charAt(0) == pieces[i] && targetCol == targets[i] && castlingStatus.charAt(i) == statuses[i]) { //king movement for castling
+                const rookStartSquare = targetRow + "-" + (parseInt(targetCol) + startCols[i]);
+                const rookEndSquare = targetRow + "-" + (parseInt(targetCol) + endCols[i]);
+                movePiece(rookStartSquare, rookEndSquare);
+                flagCastling = flagCastlings[i];
+                break;
+            }
+        }
+        //remove castling option if the king is moved for the first time to a non castling position.
+        if ( pieceId.charAt(0) == 'K' ){
+            flagCastling = "X"; //remove castling options for Whites
+        }
+        if ( pieceId.charAt(0) == 'k' ){
+            flagCastling = "x"; //remove castling options for Blacks
+        }
+    }
+
+    /**
+     * Auxiliar function to move a piece from one square to another
+     * @param {string} startSquare - square id where the piece is
+     * @param {string} targetSquare - square id where the piece will be
+     */
+    function movePiece(startSquare, targetSquare){
+        pieceId =  document.getElementById(startSquare).firstChild.id; 
+        if (pieceId == null){
+            return; //if there are no piece in the square, return
+        }
+        targetSquareElem = document.getElementById(targetSquare);
+        targetSquareElem.innerHTML = ''; //remove the piece from the square
+        targetSquareElem.appendChild(document.getElementById(pieceId));
+        const row = targetSquare.charAt(0);
+        const col = targetSquare.charAt(2);
+        board[row][col] = pieceId.charAt(0); //set new position for the piece
+        const rowStart = startSquare.charAt(0);
+        const colStart = startSquare.charAt(2);
+        board[rowStart][colStart] = 0;  //remove piece from start position in board
+        drawTaken();
+        cleanBoardSquares(); //remove possible movements indicators
+    }
+
+    /*
+     * Verify if the enemy king is under attack
+     * @param {string} type - "own" or "enemy"
+     */
+    function kingUnderAttack(type){
+        let teamToCheck = history[history.length-1].split(' ')[1]; //get the team that is active (own team)
+        if (type == "enemy"){
+            teamtoCheck = (teamToCheck == "w") ? "b" : "w"; //change the team to check
+        }
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 8; j++) {
+                if(board[i][j] == 0) continue; //skip empty squares
+                if (teamToCheck == "w") { //if current team is white, check if black king is under attack
+                    if (board[i][j].charCodeAt(0) < 97  && isKingInCheckFromPosition(i,j)){
+                        return true;
+                    }
+                } else { //if current team is black, check if white king is under attack
+                    if (board[i][j].charCodeAt(0) > 96  && isKingInCheckFromPosition(i,j)){
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    
+    /*
+     * Auxiliar function to verify if the king is under attack from an specific position
+     * @param {string} i - row of the position
+     * @param {string} j - col of the position
+     */
+    function isKingInCheckFromPosition(i, j){
+        const enemyKingPosition = getKingPosition(); //get the king position of the enemy team
+        if (document.getElementById(i + "-" +j).firstChild){
+            const pieceId = document.getElementById(i + "-" +j).firstChild.id;
+            const movs = getPossibleMoves(pieceId);
+            for (mov of movs) {
+                if (mov[0] == enemyKingPosition[0] && mov[1] == enemyKingPosition[1]){
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * draw all taken pieces 
+     * 
+     */
+    function drawTaken(){
+        row1 = row2 = col1 = col2 = 0;
+        containerWhite = document.getElementById('wtaken');
+        containerBlack = document.getElementById('btaken');
+        let piece;
+        taken.forEach(elem => {
+            if (elem == '') return; //ignore moves with non taken pieces
+            if( elem.charCodeAt(0)<97) { //white
+                square = document.getElementById("tb" + row1 + "-" + col1++);
+                square.innerHTML = "";
+                piece = square.appendChild(document.createElement("img"));
+                if (col1 > 1) {
+                    row1++; col1=0;
+                }
+            } else { //black
+                square = document.getElementById("tw" + row2 + "-" + col2++);
+                square.innerHTML = "";
+                piece = square.appendChild(document.createElement("img"));
+                if (col2 > 1) {
+                    row2++; col2=0;
+                }
+            }
+            piece.setAttribute('id', elem);
+            piece.setAttribute('src', 'pieces/' + elem.charAt(0) + '.svg');
+            piece.setAttribute('style', st2);
+        });
+    }
+
+    /**
+     * reads the board and generate a string in LEN format for the log
+     * if the game state does not change no log entry is generated
+     * 
+     */
+    function updateLog(){
+        const gameState = history[history.length-1];
+        const gameInfo = gameState.split(' ');
+        let entry ="";
+        for (let i = 0; i < 8; i++) {
+            counter=0;
+            let j = 0;
+            while(j < 8){
+                if (board[i][j] == 0){
+                    counter++;
+                } else {
+                    entry += ((counter == 0) ? '' : counter) + board[i][j].charAt(0);
+                    counter = 0;
+                }
+                j++;
+            }
+            entry += ((counter == 8) ? counter : '') + "/";
+        }
+        //flagCastling control 
+        switch(flagCastling){ 
+            case "X":
+                gameInfo[2] = gameInfo[2].replace("K","_");
+                gameInfo[2] = gameInfo[2].replace("Q","_");
+                break;
+            case "x":
+                gameInfo[2] = gameInfo[2].replace("k","_");
+                gameInfo[2] = gameInfo[2].replace("q","_");
+                break;
+        }
+        entry += (gameInfo[1] == 'w') ? " b" : " w"; //next tourn team
+        entry += ' ' + gameInfo[2]; //castling
+        entry += ' ' + gameInfo[3]; //passant square id
+        entry += ' ' + gameInfo[4]; //50 moves draw rule
+        entry += ' ' + (parseInt(gameInfo[5]) + 1); //total moves counter
+        history.push(entry);
+    }
+
+    /**
+     * reset the board to initial state
+     *
+     */
+    function reset(){
+        taken = [];
+        history = [];
+        csHistory = [];
+        pos = initialGameInfo;
+        history.push(pos);
+        currentSquare = null; 
+        cleanBoard();
+        cleanBoardSquares();
+        showPieces();
+    }
+
+    /**
+     * Go back one movement 
+     */
+    function back() {
+        if (history.length == 1 ) return;
+        history.splice(-1); //last movement goes into oblivion
+        taken.splice(-1); 
+        csHistory.splice(-1); 
+        pos = history[history.length-1];
+        currentSquare = csHistory[csHistory.length-1]
+        cleanBoard();
+        showPieces();
+    }
+
+    /**
+     * Clean the board (screen representation)
+     * 
+     */
+    function cleanBoard(){
+        const squares = document.getElementsByClassName('boardsquare');
+        for (let i=0 ; i < squares.length ; i++){
+            squares[i].innerHTML = '';
+        }
+    }
+
+    function getAcceptedMoves(pieceId){
+        //check if my king is under attack, 
+        //get all possible moves from the contrary
+        const team = history[history.length-1].split(' ')[1]; //my team
+        const contraryTeam = (team == 'w') ? 'b' : 'w';
+
+        let kingUnderAttack = false;
+        movs.forEach(mov =>{
+            if (mov[0] == kingPosition[0] && mov[1] == kingPosition[0]  ){
+                kingUnderAttack = true;
+            }
+        });
+
+        console.log(movs)
+    }
+
+    /*
+     * Get all possible moves for a piece
+     * @param {string} pieceId - id of the piece that is trying to move
+     *
+     */
+    function getPossibleMoves(pieceId){
+        let movs = [];
+        let referenceSq;
+        //if (!checkTurn(pieceId)){
+        //    return movs; //if the turn is not the active one, return an empty array
+        //}
+        const piece = pieceId.charAt(0);
+        referenceSq = document.getElementById(pieceId).parentElement;
+        const row = parseInt(referenceSq.getAttribute('id').charAt(0));
+        const col = parseInt(referenceSq.getAttribute('id').charAt(2));
+        const pos = (row * 8) + (col + 1); //a number from 1 to 64 1 => top,left of the board        
+        switch(piece){
+            case 'p' || 'P': //black pawn
+                movs = checkMovsPawn(piece, row, col);
+                break;
+            case 'P': //white pawn
+                movs = checkMovsPawn(piece, row, col);
+                break;
+            case 'r': //black Rock
+                movs = checkMovsRowCol(piece, row, col);
+                break;
+            case 'R': //white Rock
+                movs = checkMovsRowCol(piece, row, col);
+                break;
+            case 'b': //black Bishop
+                movs = checkMovsDiag(piece, row, col);
+                break;
+            case 'B': //white Bishop
+                movs = checkMovsDiag(piece, row, col);
+                break;
+            case 'q': //black Queen
+                movs = checkMovsRowCol(piece, row, col).concat(checkMovsDiag(piece, row, col));
+                break;
+            case 'Q': //white Queen
+                movs = checkMovsRowCol(piece, row, col).concat(checkMovsDiag(piece, row, col));
+                break;
+            case 'n': //black Knigth
+                movs = checkMovsKnight(piece, row, col);
+                break;
+            case 'N': //white Knigth
+                movs = checkMovsKnight(piece, row, col);
+                break;
+            case 'k': //black king
+                movs = checkMovesKing(piece, row, col);
+                break
+            case 'K': //white king
+                movs = checkMovesKing(piece, row, col);
+                break
+            }
+        return movs;
+    }
+
+    /**
+     * show posible moves for a piece
+     * 
+     */
+    function showPossibleMoves(pieceId) {
+        const movs = getPossibleMoves(pieceId); //king is not under check
+        cleanBoardSquares();
+        drawPossibleMoves(movs);
+    }
+    /*
+     * Get the king position of the team with the active turn
+     * 
+     */
+    function getKingPosition(){
+        const team = history[history.length-1].split(' ')[1];
+        const aux = (team == 'w') ? 'k' : 'K'; //search for the ene
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 8; j++) {
+                if (board[i][j] == aux){
+                    return [i,j];
+                }
+            }
+        }
+    }
+
+    /**
+     * Mark all squares defined by movs
+     *
+     */
+    function drawPossibleMoves(movs){
+        movs.forEach(location => {
+            const row = location[0];
+            const col = location[1];
+            const sq = document.getElementById(row + '-' + col);
+            if ((row+col)/2 == parseInt((row+col)/2)){
+                sq.style.setProperty('background-color', sqColor1Move);
+            }else{
+                sq.style.setProperty('background-color', sqColor2Move);
+            }
+        });
+    }
+
+    /**
+     * Clean board squares to remove guides for possible moves
+     *
+     */
+     function cleanBoardSquares(){
+        let squares = document.getElementById('container').children;
+        for(var i= 0 ; i< squares.length ; i++){
+            const row = parseInt(squares[i].id.charAt(0));
+            const col = parseInt(squares[i].id.charAt(2));
+            if ((row+col)/2 == parseInt((row+col)/2)){
+                squares[i].style.setProperty('background-color', sqColor1);
+            }else{
+                squares[i].style.setProperty('background-color', sqColor2);
+            }
+        }
+    }
+
+    /**
+     * Returns an array with all the possible movements for a Pawn (W or B)
+     * 
+     */
+    function checkMovsPawn(type,row,col){
+        const m = (type == 'p') ? 1 : -1 //sign modifier -> Black : White
+        let movs = [];
+        if (sqIsFree(row + m, col)){
+            movs.push([row + m, col]);
+        }
+        if( (row == 1 || row == 6) && sqIsFree(row + 2*m ,col)){
+            movs.push([row + 2*m ,col]);
+            //en passant flag
+            //enpassantBlack = (row+1) + "-" + col;
+        }
+        if(canCapture(type,row+m,col+m)){
+            movs.push([row+m, col+m]);
+        }
+        if(canCapture(type,row+m,col-m)){
+            movs.push([row+m,col-m]);
+        }
+        return movs;
+    }
+
+    /**
+     * Returns an array with all the possible movements for a Rows and Cols (r oe R)
+     * 
+     */
+    function checkMovsRowCol(type, row, col){
+        let movs = [];
+        for( var i = col+1; i<8 ; i++){ //row to the right
+            if(sqIsFree(row,i)){ 
+                movs.push([row,i]);
+            }else {
+                if (canCapture(type, row, i)) {
+                    movs.push([row,i]); 
+                }
+                break;
+            }
+        }
+        for( var i = col-1; i>=0 ; i--){ //row to the left
+            if(sqIsFree(row,i)){
+                movs.push([row,i]);
+            }else{
+                if (canCapture(type, row, i)) {
+                    movs.push([row,i]); 
+                }
+                break;
+            }
+        }
+        for( var i = row+1; i<8 ; i++){ //col down
+            if(sqIsFree(i,col)){ 
+                movs.push([i,col]);
+            }else{
+                if (canCapture(type, i, col)) {
+                    movs.push([i,col]); 
+                }
+                break;
+            }
+        }
+        for( var i = row-1; i>=0 ; i--){ //col up
+            if( sqIsFree(i,col)){ 
+                movs.push([i,col]);
+            } else {
+                if (canCapture(type, i, col)) {
+                    movs.push([i,col]); 
+                }
+                break;
+            }
+        }
+        return movs;
+    }
+
+    /**
+     * Check diagonal movements
+     * 
+     */
+    function checkMovsDiag(type, row, col){
+        const dirs=[[-1,+1],[-1,-1],[1,-1],[1,1]];
+        
+        let movs = [];
+        dirs.forEach(d=>{
+            for(let k = 1; k<8; k++){
+                const r = row + k*d[0];
+                const c = col + k*d[1];
+                if (sqIsFree(r,c)){
+                    movs.push([r,c]);
+                } else {
+                    if (canCapture(type, r, c)) {
+                        movs.push([r, c]); 
+                    }
+                    break;
+                }
+            }
+        });
+        return movs;
+    } 
+
+    /**
+     * Check possible moves for Knigths
+     *
+     */
+    function checkMovsKnight(piece, row, col){
+        const moves = [[-2,1],[-1,2],[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1]]; //possible moves
+        const m = (piece == 'k') ? 1 : -1 //sign modifier
+        let movs = [];
+        moves.forEach(e=>{
+            if(sqIsFree(row + e[0], col + e[1]) || canCapture(piece,row + e[0], col + e[1])){
+                movs.push([row + e[0], col + e[1]]);
+            }
+        });
+        return movs;
+    }
+
+    /**
+     * Check possible moves for Kings
+     *
+     */
+    function checkMovesKing(piece, row, col){
+        const moves = [[0,1],[1,1],[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1]]; //possible moves around
+        let movs = [];
+        moves.forEach(e=>{
+            if (!enemyKingIsClose(piece, row + e[0], col + e[1])){
+                if(sqIsFree(row + e[0], col + e[1]) || canCapture(piece,row + e[0], col + e[1]) ){
+                    movs.push([row + e[0], col + e[1]]);
+                }
+            } 
+        });
+        //check castling
+        const castlingStatus = history.slice(-1)[0].split(' ')[2]; //KQkq (castling options)
+        if (piece == 'K' && castlingStatus.charAt(0) == "K" && sqIsFree(7,5) && sqIsFree(7,6)){
+            movs.push([7,6]);
+        }
+        if (piece == 'K' && castlingStatus.charAt(1) == "Q" && sqIsFree(7,3) && sqIsFree(7,2) && sqIsFree(7,1)){
+            movs.push([7,1]);
+        }
+        if (piece == 'k' && castlingStatus.charAt(2) == "k" && sqIsFree(0,1) && sqIsFree(0,2) && sqIsFree(0,3)){
+            movs.push([0,1]);
+        }
+        if (piece == 'k' && castlingStatus.charAt(3) == "q" && sqIsFree(0,5) && sqIsFree(0,6) ){
+            movs.push([0,6]);
+        }
+        return movs;
+    }
+
+    /**
+     * Check if the enemuy king is in some square around this position
+     * 
+     */
+    function enemyKingIsClose(piece, row, col){
+        const positions2Check = [[0,1],[1,1],[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1]];
+        const enemyPiece = (piece == 'k') ? 'K' : 'k';
+        for (var i=0; i< positions2Check.length; i++){
+            const rowAux = row + positions2Check[i][0];
+            const colAux = col + positions2Check[i][1];
+            const piece2Check = document.getElementById(rowAux + "-" + colAux);
+            if (piece2Check != null){
+                if( piece2Check.children.length > 0 && piece2Check.children[0].id.charAt(0) == enemyPiece){
+                    return true; 
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * check if the square is free
+     * 
+     */
+    function sqIsFree(row, col) {
+        if (row > 7 || col > 7 || row < 0 || col < 0){ //check board boundaries
+            return false;
+        }
+        if ( document.getElementById(row + "-" + col) == null) {
+            debugger;
+        }
+        return document.getElementById(row + "-" + col).children.length == 0;
+    }
+
+    /**
+     * Verifies if we can capture a piece in a row,col position
+     * type = lowercase if black | UPPERCASE if white
+     * 
+     */
+    function canCapture(type, row, col){
+        const sqId = row + "-" + col;
+        if (document.getElementById(sqId) == null){ //check for squares outside the board
+            return false;
+        }
+        const pieceInTargetSq = document.getElementById(sqId).children;
+        if (pieceInTargetSq.length == 0){
+            return false; //there is no piece in that position therefore nothing to capture
+        }
+        const targetPiece = pieceInTargetSq[0].id.charCodeAt(0);
+        if (type.charCodeAt(0) < 97 && targetPiece < 97 ){ // UPPERCASE (we are on a White turn)
+            return false;
+        } 
+        if (type.charCodeAt(0) > 97 && targetPiece > 97 ){ // lowercase (we are on a Black turn)
+            return false;
+        } 
+        return true;
+    }
+
+    function checkTurn(pieceId){
+        if (pieceId == null){
+            debugger
+        }
+        const gameData = history[history.length-1].split(' ');
+        const activeType = gameData[1]; //turn
+        let pieceCode = pieceId.charCodeAt(0); // Returns the letter that correspond to the piece that the user is trying to move (P=white pawn)
+        if ((pieceCode > 97 && activeType == "w") || (pieceCode < 97 && activeType == "b")){
+            return false; 
+        } else {
+            return true; //return T if the pieceCode number correspond to the current active type
+        }
+    }
+    
+    //START
+    drawBoard();
+    showPieces();
+</script>
+</html>
