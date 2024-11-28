@@ -4,17 +4,48 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chess</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="modalAlert.css">
 </head>
-<body>
-    <h1>Simple Chess</h1>
-    <div>
-        <button onclick="reset()">Reset</button>
-        <button onclick="back()">Back</button>
+<body >
+    <div id="myContainer">
+        <h1 class="title">Simple Chess</h1>
+        
+        <div id="main" class="main">
+            <div id="wtaken" class="taken"></div>
+            <div id="container" class="container"></div>
+            <div id="btaken" class="btaken"></div>
+            <div id="container-decoration" class="diagonal-gradient "></div>
+        </div>
+        <div class="controls">
+            <button class="button" onclick="reset()">Reset</button>
+            <button class="button" onclick="back()">Back</button>
+        </div>
+        <div id="info" class="info" >
+            <div>
+            <h2 class="subtitle">Game log</h2>
+            <textarea id="fenlog" rows="8" cols="70" readonly class="logpanel">
+            </textarea>
+            </div>
+            <div>
+                <h2 class="subtitle">Engine Info</h2>
+                <textarea id="gameinfo" rows="8" cols="70" readonly class="logpanel">
+                </textarea>
+             </div>
+        </div>
     </div>
-    <div id="main" style="position: relative; margin: auto; width: 960px; ">
-        <div id="wtaken" style="position: absolute;  top:0px; width:160px; height: 640px;"></div>
-        <div id="container" style="position: absolute;  top:0px; left:160px;width:640px; height: 640px;"></div>
-        <div id="btaken" style="position: absolute;  top:0px;left:800px; width:160px; height: 640px;"></div>
+    
+    <!-- Modal Dialog -->
+    <div id="modalAlert" class="Modal is-hidden is-visuallyHidden">
+        <!-- Modal content -->
+        <div class="Modal-content">
+            <span id="closeModal" class="Close">&times;</span>
+            <p class="modalTitle">Check!</p>
+            <div class="modalBodyContainer">
+                <img src="img/king-icon.png" alt="check on king" style="width: 180px;">
+                <p class="modalContent">Your king is under attack.</p>
+            </div>
+        </div>
     </div>
 </body>
 
@@ -23,27 +54,19 @@
     const size = 80;
     const spiece = 60;
     //positions per row | active color | castling avalavility | En passant target square | number of moves since last pawn capture | fullmove number
-    const initialGameInfo = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/ w KQkq - 0 0"; //FEN notation
-    let flagCastling = "";
-    const st = "position:absolute; width:" + spiece + "px; height: " + spiece + "px; left:10px; top:10px; opacity:1;";  //style for pieces on the board
-    const st2 = "position:absolute; width:" + spiece + "px; height: " + spiece + "px; left:10px; top:10px; opacity:0.2;"; //style for taken pieces
+    const initialGameInfo = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 0"; //FEN notation
+
+    const st = "position:absolute; width:" + spiece + "px; height: " + spiece + "px; left:10px; top:10px; opacity:1; z-index:2;";  //style for pieces on the board
+    const st2 = "position:absolute; width:" + spiece + "px; height: " + spiece + "px; left:10px; top:10px; opacity:0.4;"; //style for taken pieces
     const sqColor1 = '#f4f4f4';
     const sqColor2 = '#4d98a8';
-    const sqColor1Move = '#f4d6d6';
-    const sqColor2Move = '#a84d4d';
-
+    const sqColor1Move = '#ff0000'; //'#f4d6d6';
+    const sqColor2Move = '#000'; //'#a84d4d';
 
     let board = [];
     let taken = [];
     let history = [];
-    let csHistory = [];
-    //initial state
-    let pos = initialGameInfo;
-    history.push(pos);
-    let currentSquare = null; //Square origin of the piece that is dragged.
-    let posShowingMoves = null; //store the position (1 - 64) of the last highligthed piece that is showing its possible moves on screen
-    let startSquare = null;
-    csHistory.push(currentSquare); // currentSquare history
+    history.push(initialGameInfo); //initial state
     taken.push('');
 
     function cleanBoardInternalState(){
@@ -82,7 +105,7 @@
      */
     function createSquare(i,j,container,color1, color2, prefix){
         let square = container.appendChild(document.createElement("div"));
-        let st = "position:absolute; width:80px; height: 80px;";
+        let st = "position:absolute; width:80px; height: 80px; ";
         st += "top:" + (i * size) + "px; left:" + (j*size) +"px;";
         st += (Math.round((i+j)/2) == (i+j)/2) ? "background-color:" + color1 : "background-color:" + color2  ;
         square.setAttribute('id', prefix + i + "-" + j);    
@@ -101,7 +124,7 @@
      */
     function showPieces(){
         cleanBoardInternalState();
-        const gameInfo = pos.split(" "); 
+        const gameInfo = history[history.length-1].split(" ");
         const rows = gameInfo[0].split('/'); //get posinfo from gameInfo (tourn, castling, others )
         rows.forEach((row,index) => {
             let counter = 0;
@@ -131,8 +154,13 @@
 
     function mouseDownOnPiece(){
         const parent = document.getElementById(event.target.id).parentElement;
-        startSquare = parent.id;
-        showPossibleMoves(event.target.id);
+        row = parseInt(parent.id.charAt(0));
+        col = parseInt(parent.id.charAt(2));
+        //check if turn belongs to the player
+        if (!checkTurn(event.target.id)){
+            return;
+        }
+        showPosibleMoves(row, col);
     }
 
     function mouseUpOnPiece(){
@@ -152,57 +180,58 @@
         event.preventDefault();
     }
 
+    /**
+     * Drop the piece on the target and verifies if the movement is valid y not back to the previous state
+     * 
+     */ 
     function drop(event){
         event.preventDefault();
-        //verify id my king is under attack after this move
-
+        let castlingStatus = '';
         if (movePiece2Position(event)){
+            castlingStatus = castling(event); //execute castling if the move applied is a castling
             if (kingUnderAttack("enemy")) { //verify if the enemy king is in check after this move
-                alert("Check!");
+                modalAlertOpen();
             }
-            updateLog(); //update log as the last operation 
-            if (kingUnderAttack("own")){
-                //revert move, the move is not valid... King under attack
+            updateLog(castlingStatus); //update log as the last operation 
+            if (kingUnderAttack("own")){//revert move, the move is not valid... My King under attack if this move is allowed!
                 back();
                 return false;
             }
+            updateInfoPanel();
+            //engineMove(board);
             return true;
-        }
+        }  
     }
 
     /**
      * Move a piece to it's new position, if it's occupied take the piece.
      * If the movement is castling, move the rook to the new position too
+     * @param {event} event
      * 
      */
     function movePiece2Position(event){
-        const pieceId = event.dataTransfer.getData("text");
-        let takenPiece = null;
-        if ( pieceId.length == 0 ) return false; //check if there a valid information for pieceID. (control for taken pieces drag&drop)  
-        let targetSquare = event.target.parentElement.id;
-        if ( startSquare == targetSquare) return false; //trying to move to the same position
-        csHistory.push(startSquare); //current square history
-        if ( targetSquare != 'container' ) { //square occupied?
-            //check same team (white on white or black on black)
-            if( (event.target.id.charCodeAt(0)>97 && pieceId.charCodeAt(0)>97) || (event.target.id.charCodeAt(0)<97 && pieceId.charCodeAt(0)<97) ) {
-                return false;
-            }
-            takenPiece = event.target.id;
-        } else {
-            targetSquareElem = event.target;
-            targetSquare = targetSquareElem.id;
-            if ( targetSquareElem.children.length > 0 ) {//check if there is already an element in the target square (drop on 10px border of square)
-                takenPiece = targetSquareElem.children[0].id;
-            }
+        const pieceId = event.dataTransfer.getData("text"); //piece to move
+        if (document.getElementById(pieceId) == null){
+            return
         }
-        if (takenPiece == null){
-            taken.push(''); //movement without taken a piece
-        }else{
-            taken.push(takenPiece);
-        }
+        const startSquare = document.getElementById(pieceId).parentElement.id;
+        const targetSquare = (event.target.id.length > 3) ? event.target.parentElement.id : event.target.id;
+        //check if the target square is a valid move
+        const movs = getPossibleMoves(parseInt(startSquare.charAt(0)), parseInt(startSquare.charAt(2)));
+        let flagValidMove = false;
+        movs.forEach(mov => {
+            if (mov[0] == targetSquare.charAt(0) && mov[1] == targetSquare.charAt(2)){
+                flagValidMove = true; 
+            }
+        });
+        if (!flagValidMove) return false; 
+        let takenPiece = '';
+        if ( document.getElementById(targetSquare).children.length > 0 ) { //square empty?
+            takenPiece = document.getElementById(targetSquare).firstChild.id;
+        } 
+        taken.push(takenPiece); 
         movePiece(startSquare, targetSquare);
-        processCastling(targetSquare); //castling detection and execution
-        return true;
+        return true; //move is valid
     }
 
     /*
@@ -210,11 +239,14 @@
      * @param {string} targetSquare - square id where the king will be at the end of the movement
      * 
      */
-    function processCastling(targetSquare){
+    function castling(event){
+        //when the movement is finished, the "event" gives us the target square to check the casting status
+        const pieceId = event.dataTransfer.getData("text");
+        const targetSquare = document.getElementById(pieceId).parentElement.id;
         const targetRow = targetSquare.charAt(0);
         const targetCol = targetSquare.charAt(2);
         const castlingStatus = history.slice(-1)[0].split(' ')[2]; //KQkq (castling options)
-        flagCastling = "";
+        let resultCastling = ''; //do not remove castling, default value
         const pieces = ['K','K','k','k'];
         const targets = [6,1,6,1];
         const statuses = ['K','Q','k','q'];
@@ -225,18 +257,19 @@
             if ( pieceId.charAt(0) == pieces[i] && targetCol == targets[i] && castlingStatus.charAt(i) == statuses[i]) { //king movement for castling
                 const rookStartSquare = targetRow + "-" + (parseInt(targetCol) + startCols[i]);
                 const rookEndSquare = targetRow + "-" + (parseInt(targetCol) + endCols[i]);
-                movePiece(rookStartSquare, rookEndSquare);
-                flagCastling = flagCastlings[i];
+                movePiece(rookStartSquare, rookEndSquare); //castling move
+                resultCastling = flagCastlings[i];
                 break;
             }
         }
         //remove castling option if the king is moved for the first time to a non castling position.
         if ( pieceId.charAt(0) == 'K' ){
-            flagCastling = "X"; //remove castling options for Whites
+            resultCastling = "X"; //remove castling options for Whites
         }
         if ( pieceId.charAt(0) == 'k' ){
-            flagCastling = "x"; //remove castling options for Blacks
+            resultCastling = "x"; //remove castling options for Blacks
         }
+        return resultCastling;
     }
 
     /**
@@ -244,20 +277,20 @@
      * @param {string} startSquare - square id where the piece is
      * @param {string} targetSquare - square id where the piece will be
      */
-    function movePiece(startSquare, targetSquare){
+    function movePiece(startSquare, targetSquare, currentBoard = board){
         pieceId =  document.getElementById(startSquare).firstChild.id; 
         if (pieceId == null){
             return; //if there are no piece in the square, return
         }
-        targetSquareElem = document.getElementById(targetSquare);
+        const targetSquareElem = document.getElementById(targetSquare);
         targetSquareElem.innerHTML = ''; //remove the piece from the square
         targetSquareElem.appendChild(document.getElementById(pieceId));
         const row = targetSquare.charAt(0);
         const col = targetSquare.charAt(2);
-        board[row][col] = pieceId.charAt(0); //set new position for the piece
+        currentBoard[row][col] = pieceId.charAt(0); //set new position for the piece
         const rowStart = startSquare.charAt(0);
         const colStart = startSquare.charAt(2);
-        board[rowStart][colStart] = 0;  //remove piece from start position in board
+        currentBoard[rowStart][colStart] = 0;  //remove piece from start position in board
         drawTaken();
         cleanBoardSquares(); //remove possible movements indicators
     }
@@ -266,20 +299,20 @@
      * Verify if the enemy king is under attack
      * @param {string} type - "own" or "enemy"
      */
-    function kingUnderAttack(type){
-        let teamToCheck = history[history.length-1].split(' ')[1]; //get the team that is active (own team)
+    function kingUnderAttack(type, currentBoard = board){
+        let teamToCheck = history[history.length-1].split(' ')[1]; //team that is active "own" by default
         if (type == "enemy"){
-            teamtoCheck = (teamToCheck == "w") ? "b" : "w"; //change the team to check
+            teamtoCheck = (teamToCheck == "w") ? "b" : "w"; //change the team to check to "enemy"
         }
         for (let i = 0; i < 8; i++) {
             for (let j = 0; j < 8; j++) {
-                if(board[i][j] == 0) continue; //skip empty squares
+                if(currentBoard[i][j] == 0) continue; //skip empty squares
                 if (teamToCheck == "w") { //if current team is white, check if black king is under attack
-                    if (board[i][j].charCodeAt(0) < 97  && isKingInCheckFromPosition(i,j)){
+                    if (currentBoard[i][j].charCodeAt(0) < 97  && isKingInCheckFromPosition(i,j)){
                         return true;
                     }
                 } else { //if current team is black, check if white king is under attack
-                    if (board[i][j].charCodeAt(0) > 96  && isKingInCheckFromPosition(i,j)){
+                    if (currentBoard[i][j].charCodeAt(0) > 96  && isKingInCheckFromPosition(i,j)){
                         return true;
                     }
                 }
@@ -293,11 +326,13 @@
      * @param {string} i - row of the position
      * @param {string} j - col of the position
      */
-    function isKingInCheckFromPosition(i, j){
-        const enemyKingPosition = getKingPosition(); //get the king position of the enemy team
-        if (document.getElementById(i + "-" +j).firstChild){
-            const pieceId = document.getElementById(i + "-" +j).firstChild.id;
-            const movs = getPossibleMoves(pieceId);
+    function isKingInCheckFromPosition(i, j, currentBoard = board){
+        if (currentBoard[i][j]){ //document.getElementById(i + "-" +j).firstChild
+            const team = (currentBoard[i][j].charCodeAt(0) > 96) ? 'w' : 'b'; //get the team ID under attack
+            const enemyKingPosition = getKingPosition(team, currentBoard); //get the king position of the enemy team
+            //const pieceId = document.getElementById(i + "-" +j).firstChild.id;
+            const piece =currentBoard[i][j]
+            const movs = getPossibleMoves(i, j, currentBoard);
             for (mov of movs) {
                 if (mov[0] == enemyKingPosition[0] && mov[1] == enemyKingPosition[1]){
                     return true;
@@ -308,7 +343,7 @@
     }
 
     /**
-     * draw all taken pieces 
+     * draw all taken pieces on screen
      * 
      */
     function drawTaken(){
@@ -344,7 +379,7 @@
      * if the game state does not change no log entry is generated
      * 
      */
-    function updateLog(){
+    function updateLog(flagCastling){
         const gameState = history[history.length-1];
         const gameInfo = gameState.split(' ');
         let entry ="";
@@ -362,7 +397,7 @@
             }
             entry += ((counter == 8) ? counter : '') + "/";
         }
-        //flagCastling control 
+        entry = entry.slice(0,-1);
         switch(flagCastling){ 
             case "X":
                 gameInfo[2] = gameInfo[2].replace("K","_");
@@ -382,33 +417,41 @@
     }
 
     /**
+     * Update the FEN log on screen
+     * 
+     */
+    function updateInfoPanel(){
+        const fenlog = document.getElementById('fenlog'); //update FEN log
+        fenlog.value = history.slice(1).join("\n");
+        fenlog.scrollTop = fenlog.scrollHeight;
+    }
+
+    /**
      * reset the board to initial state
      *
      */
     function reset(){
         taken = [];
         history = [];
-        csHistory = [];
-        pos = initialGameInfo;
-        history.push(pos);
-        currentSquare = null; 
+        history.push(initialGameInfo);
         cleanBoard();
         cleanBoardSquares();
         showPieces();
+        updateInfoPanel();
     }
 
     /**
      * Go back one movement 
+     * 
      */
     function back() {
         if (history.length == 1 ) return;
         history.splice(-1); //last movement goes into oblivion
         taken.splice(-1); 
-        csHistory.splice(-1); 
-        pos = history[history.length-1];
-        currentSquare = csHistory[csHistory.length-1]
         cleanBoard();
         showPieces();
+        drawTaken();
+        updateInfoPanel();
     }
 
     /**
@@ -422,38 +465,14 @@
         }
     }
 
-    function getAcceptedMoves(pieceId){
-        //check if my king is under attack, 
-        //get all possible moves from the contrary
-        const team = history[history.length-1].split(' ')[1]; //my team
-        const contraryTeam = (team == 'w') ? 'b' : 'w';
-
-        let kingUnderAttack = false;
-        movs.forEach(mov =>{
-            if (mov[0] == kingPosition[0] && mov[1] == kingPosition[0]  ){
-                kingUnderAttack = true;
-            }
-        });
-
-        console.log(movs)
-    }
-
     /*
      * Get all possible moves for a piece
      * @param {string} pieceId - id of the piece that is trying to move
      *
      */
-    function getPossibleMoves(pieceId){
+    function getPossibleMoves(row, col, currentBoard = board){
         let movs = [];
-        let referenceSq;
-        //if (!checkTurn(pieceId)){
-        //    return movs; //if the turn is not the active one, return an empty array
-        //}
-        const piece = pieceId.charAt(0);
-        referenceSq = document.getElementById(pieceId).parentElement;
-        const row = parseInt(referenceSq.getAttribute('id').charAt(0));
-        const col = parseInt(referenceSq.getAttribute('id').charAt(2));
-        const pos = (row * 8) + (col + 1); //a number from 1 to 64 1 => top,left of the board        
+        const piece = currentBoard[row][col];   
         switch(piece){
             case 'p' || 'P': //black pawn
                 movs = checkMovsPawn(piece, row, col);
@@ -499,21 +518,23 @@
      * show posible moves for a piece
      * 
      */
-    function showPossibleMoves(pieceId) {
-        const movs = getPossibleMoves(pieceId); //king is not under check
+    function showPosibleMoves(row, col, currentBoard=board) {
+        const movs = getPossibleMoves(row, col, currentBoard );
         cleanBoardSquares();
         drawPossibleMoves(movs);
     }
     /*
      * Get the king position of the team with the active turn
+    * @param {string} team - team to search for the king
+    * @param {array} currentBoard - current board
      * 
      */
-    function getKingPosition(){
-        const team = history[history.length-1].split(' ')[1];
-        const aux = (team == 'w') ? 'k' : 'K'; //search for the ene
+    function getKingPosition(team, currentBoard=board){
+        //const team = history[history.length-1].split(' ')[1];
+        const kingType = (team == 'w') ? 'K' : 'k'; //search for the ene
         for (let i = 0; i < 8; i++) {
             for (let j = 0; j < 8; j++) {
-                if (board[i][j] == aux){
+                if (currentBoard[i][j] == kingType){
                     return [i,j];
                 }
             }
@@ -521,7 +542,7 @@
     }
 
     /**
-     * Mark all squares defined by movs
+     * Mark all squares defined by movs on the screen
      *
      */
     function drawPossibleMoves(movs){
@@ -564,7 +585,7 @@
         if (sqIsFree(row + m, col)){
             movs.push([row + m, col]);
         }
-        if( (row == 1 || row == 6) && sqIsFree(row + 2*m ,col)){
+        if( (row == 1 || row == 6) && sqIsFree(row + m ,col) && sqIsFree(row + 2*m ,col)){
             movs.push([row + 2*m ,col]);
             //en passant flag
             //enpassantBlack = (row+1) + "-" + col;
@@ -577,7 +598,6 @@
         }
         return movs;
     }
-
     /**
      * Returns an array with all the possible movements for a Rows and Cols (r oe R)
      * 
@@ -720,17 +740,16 @@
     }
 
     /**
-     * check if the square is free
+     * check if the square is free in a board
+     * @param {number} row
+     * @param {number} col
      * 
      */
-    function sqIsFree(row, col) {
+    function sqIsFree(row, col)  {
         if (row > 7 || col > 7 || row < 0 || col < 0){ //check board boundaries
             return false;
         }
-        if ( document.getElementById(row + "-" + col) == null) {
-            debugger;
-        }
-        return document.getElementById(row + "-" + col).children.length == 0;
+        return board[row][col] == 0;
     }
 
     /**
@@ -758,9 +777,6 @@
     }
 
     function checkTurn(pieceId){
-        if (pieceId == null){
-            debugger
-        }
         const gameData = history[history.length-1].split(' ');
         const activeType = gameData[1]; //turn
         let pieceCode = pieceId.charCodeAt(0); // Returns the letter that correspond to the piece that the user is trying to move (P=white pawn)
@@ -774,5 +790,94 @@
     //START
     drawBoard();
     showPieces();
+
+
+    /*******************************************************************************
+     *  Chess Engine
+     *******************************************************************************/
+    let gameState = null;
+
+    class Node{
+        constructor(id, level,pieceId, end,fenboard, parent){
+            this.id = id;
+            this.level = level;
+            this.pieceId = pieceId; 
+            this.end = end; //end position of the piece after the move
+            this.fenboard = fenboard; //FEN board before the move
+            this.parent = parent; //parent node
+        }
+
+        /**
+         * Converts the FEN string board format to an array and applies the move
+         *  
+         * @returns {array} 2d array with the board
+         */
+        getBoard2d(){
+            const result = [];
+            const data = this.fenboard.split(' ')[0].split('/');
+            let i = 0;
+            data.forEach(rowElement => {
+                let row = [0,0,0,0,0,0,0,0];
+                let col = 0;
+                const rowPieces = rowElement.split('');
+                rowPieces.forEach(piece => {
+                    if (parseInt(piece) > 0) {
+                        col+=parseInt(piece);
+                    }else{
+                        row[col] = piece;
+                        col ++;
+                    }   
+                });
+                result.push(row);
+            });
+            //apply the move
+
+            return result;
+        }
+    }
+
+    function engineMove(currentBoard = board){
+        //build all the possible moves for the current board state
+        let myTeam = history[history.length-1].split(' ')[1]; //get machine's team
+        let posibleMovs = [];
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 8; j++) {
+                const square = document.getElementById(i+'-'+j);
+                if (!square.firstChild) continue; //skip empty squares
+                const pieceId = square.firstChild.id;
+                const movs = getPossibleMoves(i,j,currentBoard);
+                if (myTeam == "w")  { 
+                    if (board[i][j].charCodeAt(0) < 97 && movs.length > 0){
+                        posibleMovs.push({id:pieceId, movs:movs});
+                    }
+                } else { 
+                    if (board[i][j].charCodeAt(0) > 96 && movs.length > 0){
+                        posibleMovs.push({id:pieceId, movs:movs});
+                    }
+                }
+            }
+        }
+        //for each posible move, create a node and add it to the tree
+        let level = 1;
+        let nodeId = 0;
+        posibleMovs.forEach(mov => {
+            nodeId++;
+            const aux = new Node(1, nodeId, mov.id, mov.mov, history[history.length-1], null);
+            const res = aux.getBoard2d();
+            console.log(res);
+        });
+        //check is my king is under atttack, in that case some of the movs are not allowed, 'posibleMovs' needs a cleanup
+        if(kingUnderAttack()){
+            
+        }
+        console.log(posibleMovs);
+    }
+
+
+        const aux = new Node(0, 1, "K", [4,5], history[history.length-1], null);
+        const res = aux.getBoard2d();
+        console.log(res);
+    
 </script>
+<script src="modalAlert.js"></script>
 </html>
