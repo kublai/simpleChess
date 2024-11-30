@@ -66,6 +66,8 @@
     let board = [];
     let taken = [];
     let history = [];
+    let row = 0;
+    let col = 0;
     history.push(initialGameInfo); //initial state
     taken.push('');
 
@@ -189,10 +191,13 @@
         let castlingStatus = '';
         if (movePiece2Position(event)){
             castlingStatus = castling(event); //execute castling if the move applied is a castling
+           
+            
             if (kingUnderAttack("enemy")) { //verify if the enemy king is in check after this move
                 modalAlertOpen();
             }
             updateLog(castlingStatus); //update log as the last operation 
+            markEnPassant(event);
             if (kingUnderAttack("own")){//revert move, the move is not valid... My King under attack if this move is allowed!
                 back();
                 return false;
@@ -204,6 +209,28 @@
     }
 
     /**
+     * Mark en passant square in the history log
+     * @param {event} event
+     * 
+     */
+    function markEnPassant(event){
+        const pieceId = event.dataTransfer.getData("text");
+        const targetSquare = (event.target.id.length > 3) ? event.target.parentElement.id : event.target.id;
+        const m = (pieceId.charAt(0) == 'p') ? 1 : -1 
+        const enPassantFlag = Math.abs(parseInt(targetSquare.charAt(0)) - row) == 2;
+        if ( (pieceId.charAt(0) == 'p' || pieceId.charAt(0) == 'P') && enPassantFlag){ //pawn move first move
+            const enPassantSquare = (row + m) + '-' + col;
+            let gameState = history[history.length-1].split(' ');
+            gameState[3] = enPassantSquare;
+            history[history.length-1] = gameState.join(' ');
+            console.log("Passant:" + history[history.length-1]);     
+        }else{ //clean En Passant in log, no a pawn move first move
+            const enPassant = history[history.length-1].split(' ');
+            enPassant[3] = '-';
+            history[history.length-1] = enPassant.join(' ');
+        }
+    }
+    /**
      * Move a piece to it's new position, if it's occupied take the piece.
      * If the movement is castling, move the rook to the new position too
      * @param {event} event
@@ -211,9 +238,7 @@
      */
     function movePiece2Position(event){
         const pieceId = event.dataTransfer.getData("text"); //piece to move
-        if (document.getElementById(pieceId) == null){
-            return
-        }
+        if (document.getElementById(pieceId) == null) return;
         const startSquare = document.getElementById(pieceId).parentElement.id;
         const targetSquare = (event.target.id.length > 3) ? event.target.parentElement.id : event.target.id;
         //check if the target square is a valid move
@@ -233,6 +258,8 @@
         movePiece(startSquare, targetSquare);
         return true; //move is valid
     }
+
+
 
     /*
      * Process castling movements
@@ -575,6 +602,8 @@
         }
     }
 
+
+
     /**
      * Returns an array with all the possible movements for a Pawn (W or B)
      * 
@@ -587,8 +616,6 @@
         }
         if( (row == 1 || row == 6) && sqIsFree(row + m ,col) && sqIsFree(row + 2*m ,col)){
             movs.push([row + 2*m ,col]);
-            //en passant flag
-            //enpassantBlack = (row+1) + "-" + col;
         }
         if(canCapture(type,row+m,col+m)){
             movs.push([row+m, col+m]);
@@ -720,7 +747,7 @@
     }
 
     /**
-     * Check if the enemuy king is in some square around this position
+     * Check if the enemy king is in some square around this position
      * 
      */
     function enemyKingIsClose(piece, row, col){
